@@ -1,0 +1,3 @@
+# For configuration, see: https://yamllint.readthedocs.io/en/stable/configuration.html
+---
+rules: {}

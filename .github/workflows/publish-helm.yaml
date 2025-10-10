@@ -1,0 +1,116 @@
+name: Helm - Publish Charts
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "charts/**"
+
+permissions:
+  contents: read
+  packages: write  # to push OCI chart package to GitHub Registry
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          fetch-depth: 0  # Fetch all history so we can check all commits in the PR
+
+      - name: Install Helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+        with:
+          version: v4.0.4
+
+      - name: Determine changed charts
+        id: changed-charts
+        run: |
+          echo "Determining changed charts..."
+          changed_charts=""
+          changed_files=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }})
+          echo "Changed files: $changed_files"
+
+          for chart in charts/*; do
+            if [ -d "$chart" ] && echo "$changed_files" | grep -qE "^$chart/"; then
+              changed_charts="$changed_charts $(basename $chart)"
+            fi
+          done
+
+          echo "Changed charts: $changed_charts"
+          echo "CHANGED_CHARTS=$changed_charts" >> $GITHUB_ENV
+          echo "changed_charts=$changed_charts" >> $GITHUB_OUTPUT
+
+      - name: Login to GHCR
+        if: steps.changed-charts.outputs.changed_charts != ''
+        uses: docker/login-action@465a07811f14bebb1938fbed4728c6a1ff8901fc # v2.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Only push charts we actually released to GHCR.
+      #
+      # We would like to ensure that Helm chart versions are immutable.
+      # We must ensure that we only publish a Helm release or push to
+      # an OCI registry (eg: GHCR) if a given release does not already exist.
+      - name: Collect charts to be published
+        if: steps.changed-charts.outputs.changed_charts != ''
+        id: prepare-publish-list
+        run: |
+          echo "Checking chart version increment..."
+          publish_charts=""
+
+          for chart in $CHANGED_CHARTS; do
+            chart_path="charts/$chart/Chart.yaml"
+            if [ ! -f "$chart_path" ]; then
+              echo "Info: Chart '$chart' is external. No Chart.yaml found. Skipping this chart."
+              continue
+            fi
+
+            # Extract the version from Chart.yaml.
+            # NOTE(calvin): This assumes that the chart version is the first
+            # non-indented 'version:' entry in the Chart.yaml file.
+            current_version=$(grep '^version:' "$chart_path" | head -1 | awk '{print $2}')
+            echo "Current version for $chart: $current_version"
+
+            # Check if the chart with the same version already exists in the OCI registry.
+            REPO=$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')
+            if helm pull oci://ghcr.io/$REPO/$chart --version $current_version > /dev/null; then
+              echo "Warning: Chart $chart version $current_version already exists in the registry. Skipping this chart."
+            else
+              publish_charts="$publish_charts $chart"
+            fi
+          done
+
+          echo "Charts to publish: $publish_charts"
+          echo "PUBLISH_CHARTS=$publish_charts" >> $GITHUB_ENV
+          echo "publish_charts=$publish_charts" >> $GITHUB_OUTPUT
+
+      - name: Package and push charts to GHCR
+        if: steps.prepare-publish-list.outputs.publish_charts != ''
+        run: |
+          echo "Packaging and pushing charts..."
+          mkdir packaged-charts
+
+          for chart in $PUBLISH_CHARTS; do
+            echo "Updating dependencies for $chart..."
+            helm dependency update "charts/$chart"
+
+            # Package the chart.
+            echo "Packaging $chart"
+            output=$(helm package "charts/$chart" --destination packaged-charts)
+            echo "$output"
+            pkg=$(echo "$output" | awk '{print $NF}')
+
+            # Push the chart to the OCI registry.
+            REPO=$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')
+            if helm push "$pkg" oci://ghcr.io/$REPO; then
+              echo "Successfully pushed $pkg to OCI registry."
+            else
+              echo "Error pushing $pkg to OCI registry."
+              exit 1
+            fi
+          done
