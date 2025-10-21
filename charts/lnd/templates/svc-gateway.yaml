@@ -1,0 +1,28 @@
+{{- if eq .Values.lnd.service.type "gateway" }}
+
+# our gateway template connects the p2p port to the Internet via a LoadBalancer
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ template "lnd.fullname" . }}-ext
+  labels:
+    app: {{ template "lnd.name" . }}
+    chart: {{ template "lnd.chart" . }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: {{ .Values.lnd.service.awsLoadBalancerType }}
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: {{ .Values.lnd.service.awsLoadBalancerBackendProtocol }}
+    external-dns.alpha.kubernetes.io/hostname: {{ .Values.lnd.service.hostname }}
+spec:
+  type: LoadBalancer
+  selector:
+    app: {{ template "lnd.name" . }}
+    release: {{ .Release.Name }}
+  ports:
+    - name: lnd-p2p
+      protocol: TCP
+      port: {{ .Values.lnd.service.p2pPort }}
+      targetPort: {{ .Values.lnd.service.targetPort }}
+
+{{- end }}

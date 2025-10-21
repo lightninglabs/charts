@@ -1,0 +1,180 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ template "lnd.fullname" . }}-init-script
+  labels:
+    app: {{ template "lnd.name" . }}
+    chart: {{ template "lnd.chart" . }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+data:
+  init-wallet-k8s.sh: |-
+    #!/bin/bash
+
+    set -e
+
+    WALLET_SECRET_NAME=${WALLET_SECRET_NAME:-lnd-wallet-secret}
+    WALLET_SECRET_NAMESPACE=${WALLET_SECRET_NAMESPACE:-default}
+    WALLET_DIR=${WALLET_DIR:-~/.lnd/data/chain/bitcoin/mainnet}
+    WALLET_PASSWORD_FILE=${WALLET_PASSWORD_FILE:-/tmp/wallet-password}
+    CERT_DIR=${CERT_DIR:-~/.lnd}
+    UPLOAD_RPC_SECRETS=${UPLOAD_RPC_SECRETS:-0}
+    RPC_SECRETS_NAME=${RPC_SECRETS_NAME:-lnd-rpc-secret}
+    RPC_SECRETS_NAMESPACE=${RPC_SECRETS_NAMESPACE:-default}
+    NETWORK=${NETWORK:-mainnet}
+    RPC_SERVER=${RPC_SERVER:-localhost:10009}
+    REMOTE_SIGNING=${REMOTE_SIGNING:0}
+    REMOTE_SIGNER_RPC_SECRETS_DIR=${REMOTE_SIGNER_RPC_SECRETS_DIR:-/tmp/remote-signer-rpc-secrets}
+    REMOTE_SIGNER_RPC_SECRETS_NAME=${REMOTE_SIGNER_RPC_SECRETS_NAME:-lnd-signer-rpc-secret}
+    REMOTE_SIGNER_RPC_SECRETS_NAMESPACE=${REMOTE_SIGNER_RPC_SECRETS_NAMESPACE:-signer}
+    LND_SERVICE_HOSTNAME=${LND_SERVICE_HOSTNAME:-localhost}
+    UPLOAD_CONNECTION_INFO=${UPLOAD_CONNECTION_INFO:-0}
+    DISCOVERY_CONFIGMAP_NAMESPACE=${DISCOVERY_CONFIGMAP_NAMESPACE:-default}
+    DISCOVERY_CONFIGMAP_NAME=${DISCOVERY_CONFIGMAP_NAME:-lnd-proxy-pool-cm}
+
+    # Convert comma-separated namespace list into an array
+    IFS=',' read -r -a RPC_SECRETS_NAMESPACE_ARRAY <<< "${RPC_SECRETS_NAMESPACE}"
+
+    # Function to upload connection info
+    function upload_connection_info() {
+        echo ""
+        echo "[STARTUP] Uploading connection information to configmap"
+        NODE_PUBLIC_KEY=$(lncli --network "${NETWORK}" \
+          --rpcserver "${RPC_SERVER}" \
+          --tlscertpath "${CERT_DIR}/tls.cert" \
+          --macaroonpath "${WALLET_DIR}/admin.macaroon" \
+          getinfo | jq -r '.identity_pubkey')
+
+        # Capture the current timestamp.
+        START_TIME=$(date -I)T$(date +%H:%M:%S)
+
+        # Append the start time to the configmap value.
+        CONFIGMAP_VALUE="secret: ${RPC_SECRETS_NAME}\nhostname: ${LND_SERVICE_HOSTNAME}\nstartedAt: ${START_TIME}"
+
+        echo "[STARTUP] Writing node connection information to configmap: $DISCOVERY_CONFIGMAP_NAMESPACE/$DISCOVERY_CONFIGMAP_NAME"
+        echo -e "$CONFIGMAP_VALUE" | lndinit -v store-configmap \
+          --target=k8s \
+          --k8s.namespace="${DISCOVERY_CONFIGMAP_NAMESPACE}" \
+          --k8s.configmap-name="${DISCOVERY_CONFIGMAP_NAME}" \
+          --k8s.configmap-key-name="${NODE_PUBLIC_KEY}" \
+          --overwrite
+    }
+
+    echo "[STARTUP] Asserting wallet password exists in secret ${WALLET_SECRET_NAME}"
+    lndinit gen-password \
+      | lndinit -v store-secret \
+      --target=k8s \
+      --k8s.namespace="${WALLET_SECRET_NAMESPACE}" \
+      --k8s.secret-name="${WALLET_SECRET_NAME}" \
+      --k8s.secret-key-name=walletpassword
+
+    echo ""
+    echo "[STARTUP] Asserting seed exists in secret ${WALLET_SECRET_NAME}"
+    lndinit gen-seed \
+      | lndinit -v store-secret \
+      --target=k8s \
+      --k8s.namespace="${WALLET_SECRET_NAMESPACE}" \
+      --k8s.secret-name="${WALLET_SECRET_NAME}" \
+      --k8s.secret-key-name=walletseed
+
+    # In case we have a remote signing setup, we also need to provision the RPC
+    # secrets of the remote signer.
+    WALLET_INIT_FLAGS=""
+    if [[ "${REMOTE_SIGNING}" == "1" ]]; then
+      echo "[STARTUP] Provisioning remote signer RPC secrets"
+      mkdir -p "${REMOTE_SIGNER_RPC_SECRETS_DIR}"
+      lndinit -v load-secret \
+        --source=k8s \
+        --k8s.namespace="${REMOTE_SIGNER_RPC_SECRETS_NAMESPACE}" \
+        --k8s.secret-name="${REMOTE_SIGNER_RPC_SECRETS_NAME}" \
+        --k8s.secret-key-name=tls.cert > "${REMOTE_SIGNER_RPC_SECRETS_DIR}/tls.cert"
+      lndinit -v load-secret \
+        --source=k8s \
+        --k8s.namespace="${REMOTE_SIGNER_RPC_SECRETS_NAMESPACE}" \
+        --k8s.secret-name="${REMOTE_SIGNER_RPC_SECRETS_NAME}" \
+        --k8s.secret-key-name=admin.macaroon > "${REMOTE_SIGNER_RPC_SECRETS_DIR}/admin.macaroon"
+    
+      # If we're importing the accounts from the signing instance, we need to
+      # fetch the file first and add it to the init-wallet command, together
+      # with the watch-only flag. If we're converting an existing wallet into a
+      # watch-only one, then the init-wallet command will never actually go
+      # through and this is a no-op.
+      lndinit -v load-secret \
+        --source=k8s \
+        --k8s.namespace="${REMOTE_SIGNER_RPC_SECRETS_NAMESPACE}" \
+        --k8s.secret-name="${REMOTE_SIGNER_RPC_SECRETS_NAME}" \
+        --k8s.secret-key-name=accounts.json > "${REMOTE_SIGNER_RPC_SECRETS_DIR}/accounts.json"
+      WALLET_INIT_FLAGS="--init-rpc.watch-only --init-rpc.accounts-file=${REMOTE_SIGNER_RPC_SECRETS_DIR}/accounts.json"
+    fi
+
+    echo ""
+    echo "[STARTUP] Asserting wallet is created with values from secret ${WALLET_SECRET_NAME}"
+    lndinit -v init-wallet \
+      --secret-source=k8s \
+      --k8s.namespace="${WALLET_SECRET_NAMESPACE}" \
+      --k8s.secret-name="${WALLET_SECRET_NAME}" \
+      --k8s.seed-key-name=walletseed \
+      --k8s.wallet-password-key-name=walletpassword \
+      --init-type=rpc \
+      --init-rpc.server="${RPC_SERVER}" \
+      --init-rpc.tls-cert-path="${CERT_DIR}/tls.cert" \
+      ${WALLET_INIT_FLAGS} \
+      || echo "[STARTUP] Wallet seems to already exist" &
+
+    echo ""
+    echo "[STARTUP] Preparing lnd auto unlock file"
+
+    # To make sure the password can be read exactly once (by lnd itself), we create
+    # a named pipe. Because we can only write to such a pipe if there's a reader on
+    # the other end, we need to run this in a sub process in the background.
+    mkfifo "${WALLET_PASSWORD_FILE}"
+    lndinit -v load-secret \
+      --source=k8s \
+      --k8s.namespace="${WALLET_SECRET_NAMESPACE}" \
+      --k8s.secret-name="${WALLET_SECRET_NAME}" \
+      --k8s.secret-key-name=walletpassword > "${WALLET_PASSWORD_FILE}" &
+
+    # In case we want to upload the TLS certificate, macaroons and accounts JSON
+    # k8s secrets as well once lnd is ready, we can use the wait-ready and
+    # store-secret commands in combination to wait until lnd is ready and then
+    # batch upload the files to k8s.
+    if [[ "${UPLOAD_RPC_SECRETS}" == "1" ]]; then
+      echo ""
+      echo "[STARTUP] Starting RPC secret uploader process in background"
+      lndinit -v wait-ready \
+        && lncli --network "${NETWORK}" --rpcserver "${RPC_SERVER}" \
+        --tlscertpath "${CERT_DIR}/tls.cert" \
+        --macaroonpath "${WALLET_DIR}/walletkit.macaroon" \
+        wallet accounts list > /tmp/accounts.json \
+        && {
+          for NS in "${RPC_SECRETS_NAMESPACE_ARRAY[@]}"; do
+            echo "[STARTUP] Uploading RPC secrets to namespace: ${NS}"
+            lndinit -v store-secret \
+            --batch \
+            --overwrite \
+            --target=k8s \
+            --k8s.namespace="${NS}" \
+            --k8s.secret-name="${RPC_SECRETS_NAME}" \
+            "${CERT_DIR}/tls.cert" \
+            "${WALLET_DIR}"/*.macaroon \
+            /tmp/accounts.json
+          done
+
+          # Optionally upload the connection information for this lnd instance
+          # to a k8s configmap, where it can be consumed by any client (eg:
+          # paymentservice proxy) which would like to interact with lnd RPCs.
+          #
+          # NOTE(calvin): If this runs *after* the RPC secrets are updated,
+          # then our discovery mechanism will always pull the latest connection
+          # info (eg: TLS certificate and macaroon).
+          if [[ "${UPLOAD_CONNECTION_INFO}" == "1" ]]; then
+            upload_connection_info
+          fi
+        } &
+    fi
+
+    # And finally start lnd. We need to use "exec" here to make sure all signals are
+    # forwarded correctly.
+    echo ""
+    echo "[STARTUP] Starting lnd with flags: $@"
+    exec lnd "$@"

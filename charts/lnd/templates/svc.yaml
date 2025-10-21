@@ -1,0 +1,93 @@
+# the standard template exposes the rpc and p2p service internally to
+# the cluster.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ template "lnd.fullname" . }}-int
+  labels:
+    app: {{ template "lnd.name" . }}
+    chart: {{ template "lnd.chart" . }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+spec:
+  selector:
+    app: {{ template "lnd.name" . }}
+    release: {{ .Release.Name }}
+  ports:
+{{- if not (eq .Values.lnd.service.type "signer") }}
+    - name: lnd-p2p
+      protocol: TCP
+      port: {{ .Values.lnd.service.p2pPort }}
+      targetPort: {{ .Values.lnd.service.targetPort }}
+{{- end}}
+    - name: lnd-rpc
+      protocol: TCP
+      port:  {{ .Values.lnd.service.rpcPort }}
+      targetPort: {{ .Values.lnd.service.rpcTargetPort }}
+{{- if (eq .Values.lnd.service.type "rest") }}
+    - name: lnd-rest
+      protocol: TCP
+      port:  {{ .Values.lnd.service.restPort }}
+      targetPort: {{ .Values.lnd.service.restTargetPort }}
+{{- end}}
+
+{{- if .Values.lndmon.enabled }}
+---
+
+# lndmon
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ template "lnd.fullname" . }}-lndmon
+  labels:
+    app: {{ template "lnd.name" . }}
+    chart: {{ template "lnd.chart" . }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+    lnd_instance: {{ .Values.lndmon.prometheus.lndInstance }}
+{{- if not .Values.lndmon.prometheus.noLegacyAnnotations }}
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/path: "/metrics"
+    prometheus.io/port: {{ default "8990" .Values.lndmon.prometheus.port | quote }}
+{{ end }}
+spec:
+  ports:
+    - name: prometheus
+      protocol: TCP
+      port: {{ default 8990 .Values.lndmon.prometheus.port }}
+  selector:
+    app: {{ template "lnd.name" . }}
+    release: {{ .Release.Name }}
+
+{{- end }}
+{{- if .Values.lndmon.prometheus.serviceMonitor }}
+---
+
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ template "lnd.fullname" . }}-lndmon
+  labels:
+    {{- $root := . -}}
+    {{- $smon := .Values.lndmon.serviceMonitorLabels | default (dict) -}}
+    {{- range $key, $value := ($smon.labels | default (dict)) }}
+    {{ $key }}: {{ tpl (toString $value) $root | quote }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- $root := . -}}
+      {{- $smon := .Values.lndmon.serviceMonitorLabels | default (dict) -}}
+      {{- range $key, $value := ($smon.selectorLabels | default (dict)) }}
+      {{ $key }}: {{ tpl (toString $value) $root | quote }}
+      {{- end }}
+  endpoints:
+    - port: "prometheus"
+      targetLabels:
+        {{- $smon := .Values.lndmon.serviceMonitorLabels | default (dict) -}}
+        {{- range ($smon.targetLabels | default (list)) }}
+        - {{ tpl (toString .) $root | quote }}
+        {{- end }}
+
+{{- end }}

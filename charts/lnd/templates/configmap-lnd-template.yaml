@@ -1,0 +1,253 @@
+{{- $bitcoinNetwork := .Values.global.network | default "regtest" }}
+{{- $bitcoinNode := .Values.lnd.config.bitcoin.node | default "bitcoind" }}
+{{- $dbBackend := .Values.lnd.db.backend | default "bolt" }}
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ template "lnd.fullname" . }}-lnd
+  labels:
+    app: {{ template "lnd.name" . }}
+    chart: {{ template "lnd.chart" . }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+data:
+  bashrc: alias lncli='/bin/lncli --tlscertpath /data/tls.cert --macaroonpath /data/chain/bitcoin/{{ .Values.global.network }}/admin.macaroon
+    --network {{ .Values.global.network }}'
+
+  lnd.conf: |-
+    [Application Options]
+    {{- range $k, $v := .Values.lnd.config.overrides }}
+    {{ $k }}={{ $v }}
+    {{- end }}
+
+    [Bitcoin]
+    bitcoin.active=true
+  {{- if eq $bitcoinNetwork "mainnet" }}
+    bitcoin.mainnet=true
+    {{- else if eq $bitcoinNetwork "testnet" }}
+    bitcoin.testnet=true
+    {{- else if eq $bitcoinNetwork "simnet" }}
+    bitcoin.simnet=true
+    {{- else if eq $bitcoinNetwork "signet" }}
+    bitcoin.signet=true
+    {{- else }}
+    bitcoin.regtest=true
+    {{- end }}
+    {{- if not .Values.lnd.config.bitcoin.node }}
+    bitcoin.node={{ $bitcoinNode }}
+  {{- end}}
+    {{- range $k, $v := .Values.lnd.config.bitcoin }}
+    {{- if ne $k "credentials" }}
+    bitcoin.{{ $k }}={{ $v }}
+    {{- end }}
+    {{- end }}
+
+  {{- if eq $bitcoinNode "btcd" }}
+    [Btcd]
+    {{- range $k, $v := .Values.lnd.config.btcd }}
+    {{- if and (ne $k "rpcuser") (ne $k "rpcpass") }}
+    btcd.{{ $k }}={{ $v }}
+    {{- end }}
+    {{- end }}
+    {{- if not (hasKey .Values.lnd.btcd "rpcuser") }}
+    btcd.rpcuser=${{ .Values.lnd.config.bitcoin.credentials.userKey }}
+    {{- else }}
+    btcd.rpcuser={{ .Values.lnd.btcd.rpcuser }}
+    {{- end }}
+    {{- if not (hasKey .Values.lnd.btcd "rpcpass") }}
+    btcd.rpcpass=${{ .Values.lnd.bitcoin.credentials.passwordKey }}
+    {{- else }}
+    btcd.rpcpass={{ .Values.lnd.btcd.rpcpass }}
+    {{- end }}
+  {{- end }}
+
+  {{- if eq $bitcoinNode "bitcoind" }}
+    [Bitcoind]
+    {{- range $k, $v := .Values.lnd.config.bitcoind }}
+    {{- if and (ne $k "rpcuser") (ne $k "rpcpass") }}
+    bitcoind.{{ $k }}={{ $v }}
+    {{- end }}
+    {{- end }}
+    {{- if not (hasKey .Values.lnd.bitcoind "rpcuser") }}
+    bitcoind.rpcuser=${{ .Values.lnd.config.bitcoin.credentials.userKey }}
+    {{- else }}
+    bitcoind.rpcuser={{ .Values.lnd.bitcoind.rpcuser }}
+    {{- end }}
+    {{- if not (hasKey .Values.lnd.bitcoind "rpcpass") }}
+    bitcoind.rpcpass=${{ .Values.lnd.config.bitcoin.credentials.passwordKey }}
+    {{- else }}
+    bitcoind.rpcpass={{ .Values.lnd.bitcoind.rpcpass }}
+    {{- end }}
+  {{- end }} 
+
+  {{- if eq $bitcoinNode "neutrino" }}
+    [neutrino]
+    {{- range $k, $v := .Values.lnd.config.bitcoind }}
+    neutrino.{{ $k }}={{ $v }}
+    {{- end }}
+  {{- end }} 
+
+  {{- if .Values.lnd.config.autopilot }}
+    [autopilot]
+    autopilot.active=true
+    {{- range $k, $v := .Values.lnd.config.autopilot }}
+    autopilot.{{ $k }}={{ $v }}
+    {{- end }}
+  {{- end }}
+
+  {{- if .Values.lnd.config.tor }}
+    [tor]
+    tor.active=true
+    {{- range $k, $v := .Values.lnd.config.tor }}
+    tor.{{ $k }}={{ $v }}
+    {{- end }}
+  {{- end }}
+
+  {{- if .Values.lnd.config.watchtower }}
+    [watchtower]
+    watchtower.active=true
+    {{- range $k, $v := .Values.lnd.config.watchtower }}
+    watchtower.{{ $k }}={{ $v }}
+    {{- end }}
+  {{- end }}
+
+  {{- if .Values.lnd.config.wtclient }}
+    [wtclient]
+    wtclient.active=true
+    {{- range $k, $v := .Values.lnd.config.wtclient }}
+    wtclient.{{ $k }}={{ $v }}
+    {{- end }}
+  {{- end }}
+
+  {{- if .Values.lnd.config.healthcheck }}
+    [healthcheck]
+    {{- range $k, $v := .Values.lnd.config.healthcheck }}
+    healthcheck.{{ $k }}={{ $v }}
+    {{- end }}
+  {{- end }}
+
+  {{- if .Values.lnd.config.signrpc }}
+    [signrpc]
+    {{- range $k, $v := .Values.lnd.config.signrpc }}
+    signrpc.{{ $k }}={{ $v }}
+    {{- end }}
+  {{- end }}
+
+  {{- if .Values.lnd.config.walletrpc }}
+    [walletrpc]
+    {{- range $k, $v := .Values.lnd.config.walletrpc }}
+    walletrpc.{{ $k }}={{ $v }}
+    {{- end }}
+  {{- end }}
+
+  {{- if .Values.lnd.config.chainrpc }}
+    [chainrpc]
+    {{- range $k, $v := .Values.lnd.config.chainrpc }}
+    chainrpc.{{ $k }}={{ $v }}
+    {{- end }}
+  {{- end }}
+
+  {{- if .Values.lnd.config.routerrpc }}
+    [routerrpc]
+    {{- range $k, $v := .Values.lnd.config.routerrpc }}
+    routerrpc.{{ $k }}={{ $v }}
+    {{- end }}
+  {{- end }}
+
+  {{- if .Values.lnd.config.workers }}
+    [workers]
+    {{- range $k, $v := .Values.lnd.config.workers }}
+    workers.{{ $k }}={{ $v }}
+    {{- end }}
+  {{- end }}
+
+  {{- if .Values.lnd.config.caches }}
+    [caches]
+    {{- range $k, $v := .Values.lnd.config.caches }}
+    caches.{{ $k }}={{ $v }}
+    {{- end }}
+  {{- end }}
+
+  {{- if .Values.lnd.config.protocol }}
+    [protocol]
+    {{- range $k, $v := .Values.lnd.config.protocol }}
+    protocol.{{ $k }}={{ $v }}
+    {{- end }}
+  {{- end }}
+
+    [db]
+    db.backend={{ $dbBackend }}
+    db.use-native-sql={{ .Values.lnd.db.useNativeSql }}
+  {{- if eq $dbBackend "etcd" }}
+    [etcd]
+    {{- range $k, $v := .Values.lnd.db.etcd }}
+    db.etcd.{{ $k }}={{ $v }}
+    {{ end }}
+  {{- else if eq $dbBackend "sqlite" }}
+    [sqlite]
+    {{- range $k, $v := .Values.lnd.db.sqlite }}
+    db.sqlite.{{ $k }}={{ $v }}
+    {{ end }}
+  {{- else if eq $dbBackend "postgres" }}
+    [postgres]
+    {{- range $k, $v := .Values.lnd.db.postgres }}
+    db.postgres.{{ $k }}={{ $v }}
+    {{ end }}
+  {{- else }}
+    [bolt]
+    {{- if .Values.lnd.db.bolt }}
+    {{- range $k, $v := .Values.lnd.db.bolt }}
+    db.bolt.{{ $k }}={{ $v }}
+    {{- end }}
+    {{- end }}
+  {{- end }}
+
+  {{- if .Values.lnd.config.cluster }}
+    [cluster]
+    {{- range $k, $v := .Values.lnd.config.cluster }}
+    cluster.{{ $k }}={{ $v }}
+    {{- end }}
+  {{- end }}
+
+  {{- if .Values.lnd.config.rpcmiddleware }}
+    [rpcmiddleware]
+    {{- range $k, $v := .Values.lnd.config.rpcmiddleware }}
+    rpcmiddleware.{{ $k }}={{ $v }}
+    {{- end }}
+  {{- end }}
+
+  {{- if .Values.lnd.config.remotesigner }}
+    [remotesigner]
+    {{- range $k, $v := .Values.lnd.config.remoteSigner }}
+    remotesigner.{{ $k }}={{ $v }}
+    {{- end }}
+  {{- end }}
+
+  {{- if .Values.lnd.config.gossip }}
+    [gossip]
+    {{- range $k, $v := .Values.lnd.config.gossip }}
+    gossip.{{ $k }}={{ $v }}
+    {{- end }}
+  {{- end }}
+
+  {{- if .Values.lnd.config.invoices }}
+    [invoices]
+    {{- range $k, $v := .Values.lnd.config.invoices }}
+    invoices.{{ $k }}={{ $v }}
+    {{- end }}
+  {{- end }}
+
+  {{- if .Values.lnd.config.routing }}
+    [routing]
+    {{- range $k, $v := .Values.lnd.config.routing }}
+    routing.{{ $k }}={{ $v }}
+    {{- end }}
+  {{- end }}
+
+  {{- if .Values.lnd.config.prometheus }}
+    [prometheus]
+    {{- range $k, $v := .Values.lnd.config.prometheus }}
+    prometheus.{{ $k }}={{ $v }}
+    {{- end }}
+  {{- end }}

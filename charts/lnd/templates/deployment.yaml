@@ -1,0 +1,244 @@
+{{- $lndFullname := include "lnd.fullname" . }}
+{{- $bitcoinNode := .Values.lnd.config.bitcoin.node | default "bitcoind" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ template "lnd.fullname" . }}
+  labels:
+    app: {{ template "lnd.name" . }}
+    chart: {{ template "lnd.chart" . }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+    node: lnd
+spec:
+  strategy:
+    type: Recreate
+
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: {{ template "lnd.name" . }}
+      release: {{ .Release.Name }}
+      node: lnd
+
+  template:
+    metadata:
+      labels:
+        app: {{ template "lnd.name" . }}
+        release: {{ .Release.Name }}
+        node: lnd
+    spec:
+      terminationGracePeriodSeconds: {{ default "30" .Values.terminationGracePeriodSeconds }}
+
+      affinity: {{- toYaml .Values.lnd.affinity | nindent 8 }}
+          
+      # We use the special service account created, so lndinit is
+      # able to update the secret as expected.
+      serviceAccountName: {{ template "lnd.serviceAccountName" . }}
+
+      # Needed to allow minikubes to fetch the container for a local deploy.
+      {{- if .Values.usePullSecrets }}
+      imagePullSecrets:
+      {{ toYaml .Values.pullSecrets | nindent 8 }}
+      {{- end }}
+
+      # A variable that we're going to use as the prefix for our secrets, so it
+      # can be overwritten.
+      {{- $lndSecrets := .Values.lnd.secrets | default dict }}
+      {{- $walletSecretsFullName := $lndSecrets.existingWalletSecretPrefix | default (include "lnd.fullname" .) }}
+      {{- $rpcSecretsFullName := (include "lnd.fullname" .) }}
+
+      containers:
+        # The main lnd container
+        - name: lnd
+          image: "{{ .Values.lnd.repository }}:{{ default .Chart.AppVersion .Values.lnd.tag }}"
+          imagePullPolicy: {{ default "IfNotPresent" .Values.lnd.pullPolicy | quote }}
+          resources:
+{{ toYaml .Values.resources | indent 12 }}
+          env:
+            - name: WALLET_SECRET_NAMESPACE
+              value: {{ default .Release.Namespace $lndSecrets.existingWalletSecretNamespace }}
+            - name: WALLET_SECRET_NAME
+              value: {{ printf "%s-lnd-wallet-secret" $walletSecretsFullName }}
+            - name: WALLET_DIR
+              value: /data/chain/bitcoin/{{ .Values.global.network }}
+            - name: WALLET_PASSWORD_FILE
+              value: /tmp/wallet-password-pipe
+            - name: CERT_DIR
+              value: /data
+            - name: UPLOAD_RPC_SECRETS
+              value: '1'
+            - name: RPC_SECRETS_NAMESPACE
+              value: {{ $lndSecrets.rpcSecretNamespace | default (list .Release.Namespace) | join "," | quote }}
+            - name: RPC_SECRETS_NAME
+              value: {{ printf "%s-lnd-rpc-secrets" $rpcSecretsFullName }}
+            {{- if $lndSecrets.remoteSigning }}
+            - name: REMOTE_SIGNING
+              value: '1'
+            - name: REMOTE_SIGNER_RPC_SECRETS_DIR
+              value: /tmp/remote-signer-rpc-secrets
+            - name: REMOTE_SIGNER_RPC_SECRETS_NAME
+              value: {{ $lndSecrets.remoteSigningRPCSecretName }}
+            - name: REMOTE_SIGNER_RPC_SECRETS_NAMESPACE
+              value: {{ $lndSecrets.remoteSigningNamespace }}
+            {{- end }}
+          {{- if not (hasKey (ternary .Values.lnd.config.btcd .Values.lnd.bitcoind (eq $bitcoinNode "btcd")) "rpcpass") }}
+          envFrom:
+          - secretRef:
+              name: {{ .Values.lnd.config.bitcoin.credentials.secretName }}
+          {{- end }}
+          command: ['/lnd-init/init-wallet-k8s.sh']
+          args: [
+            '--bitcoin.{{- .Values.global.network }}',
+          {{- if not (eq .Values.lnd.service.type "signer") }}
+          {{- if eq .Values.global.network "mainnet" }}
+            '--bitcoind.rpchost={{ .Values.lnd.bitcoind.hostname }}:{{ default "8332" .Values.lnd.bitcoind.port }}',
+          {{- else if eq .Values.global.network "testnet" }}
+            '--bitcoind.rpchost={{ .Values.lnd.bitcoind.hostname }}:{{ default "18332" .Values.lnd.bitcoind.port }}',
+          {{- else if eq .Values.global.network "testnet4" }}
+            '--bitcoind.rpchost={{ .Values.lnd.bitcoind.hostname }}:{{ default "48332" .Values.lnd.bitcoind.port }}',
+          {{- else if eq .Values.global.network "regtest" }}
+            '--bitcoind.rpchost={{ .Values.lnd.bitcoind.hostname }}:{{ default "18443" .Values.lnd.bitcoind.port }}',
+          {{- else if eq .Values.global.network "signet" }}
+            '--bitcoind.rpchost={{ .Values.lnd.bitcoind.hostname }}:{{ default "38332" .Values.lnd.bitcoind.port }}',
+          {{- end }}
+            '--bitcoind.zmqpubrawblock=tcp://{{ .Values.lnd.bitcoind.hostname }}:28332',
+            '--bitcoind.zmqpubrawtx=tcp://{{ .Values.lnd.bitcoind.hostname }}:28333',
+          {{- end }}
+            '--datadir=/data',
+            '--backupfilepath=/backup/channel.backup',
+            '--logdir=/data',
+            '--configfile=/lnd-config/lnd.conf',
+            '--tlscertpath=/data/tls.cert',
+            '--tlskeypath=/data/tls.key',
+            '--rpclisten=0.0.0.0:{{ .Values.lnd.service.rpcTargetPort }}',
+            '--wallet-unlock-password-file=/tmp/wallet-password-pipe',
+            '--wallet-unlock-allow-create',
+            # We always set the listen port. But the main config file will
+            # decide if we actually listen or not (nolisten=true).
+            '--listen=0.0.0.0:{{ .Values.lnd.service.p2pTargetPort }}',
+            # We need to add the domain that all the other pods will use to
+            # communicate with this "lnd service".
+            '--tlsextradomain={{ template "lnd.fullname" . }}-int',
+            '--tlsextradomain={{ template "lnd.fullname" . }}-int.{{ .Release.Namespace }}.svc.cluster.local',
+            # If this is a lnd-gateway node we add its official DNS
+            # name
+          {{- if eq .Values.lnd.service.type "gateway" }}
+            '--tlsextradomain={{ .Values.lnd.service.hostname }}',
+            '--externalhosts={{ .Values.lnd.service.hostname }}',
+          {{- end }}
+          {{- if $lndSecrets.remoteSigning }}
+            '--remotesigner.enable',
+            '--remotesigner.rpchost={{ printf "%s.%s.svc.cluster.local:10009" $lndSecrets.remoteSigningHostname $lndSecrets.remoteSigningNamespace }}',
+            '--remotesigner.tlscertpath=/tmp/remote-signer-rpc-secrets/tls.cert',
+            '--remotesigner.macaroonpath=/tmp/remote-signer-rpc-secrets/admin.macaroon',
+            {{- if $lndSecrets.remoteSigningInit }}
+              {{- if eq $lndSecrets.remoteSigningInit "convert" }}
+            '--remotesigner.migrate-wallet-to-watch-only',
+              {{- end }}
+            {{- end }}
+          {{- end }}
+          ]
+          startupProbe:
+            exec:
+              command: ["sh", "-c", "lncli -n {{ .Values.global.network }} --tlscertpath=/data/tls.cert state | grep -q SERVER_ACTIVE"]
+            failureThreshold: 360
+            periodSeconds: 10
+            initialDelaySeconds: {{ default "60" .Values.lnd.initialDelaySeconds }}
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "lncli -n {{ .Values.global.network }} --tlscertpath=/data/tls.cert state | grep -q SERVER_ACTIVE"]
+            failureThreshold: 3
+            periodSeconds: 5
+            timeoutSeconds: 2
+          ports:
+            - name: lnd-rpc
+              containerPort: {{ .Values.lnd.service.rpcTargetPort }}
+          {{- if not (eq .Values.lnd.service.type "signer") }}
+            - name: lnd-p2p
+              containerPort: {{ .Values.lnd.service.p2pTargetPort }}
+          {{- end }}
+          {{- if (eq .Values.lnd.service.type "rest") }}
+            - name: lnd-rest
+              containerPort: {{ .Values.lnd.service.restTargetPort }}
+          {{- end }}
+          volumeMounts:
+            # The persistent volume for the main lnd instance. 
+            - name: data-lnd
+              mountPath: /data
+            # The channel backups go into a separate volume so they can be
+            # uploaded to a safe location easily.
+            - name: backup-lnd
+              mountPath: /backup
+            # The lnd config map volume. This is used so we can have access to
+            # the entries in the value.yaml as env variables or for them to be
+            # visible on the file system.
+            - name: lnd-config
+              mountPath: /lnd-config/lnd.conf
+              subPath: lnd.conf
+            - name: lnd-config
+              mountPath: /root/.bashrc
+              subPath: bashrc
+            - name: lnd-init
+              mountPath: /lnd-init/init-wallet-k8s.sh
+              subPath: init-wallet-k8s.sh
+      {{- if .Values.lndmon.enabled }}
+        # Lndmon container
+        - name: lndmon
+          image: "{{ .Values.lndmon.repository }}:{{ .Values.lndmon.tag }}"
+          imagePullPolicy: {{ default "IfNotPresent" .Values.lndmon.pullPolicy | quote }}
+          command: ['/bin/sh', '-c', 'sleep {{ default "5" .Values.lndmon.startupDelay}};
+            /bin/lndmon
+              --lnd.network={{ .Values.global.network }}
+              --prometheus.listenaddr=0.0.0.0:{{ default "8990" .Values.lndmon.prometheus.port }}
+              --lnd.host={{ default "localhost" .Values.lndmon.lndHost }}:{{ default "10009" .Values.lndmon.lndPort }}
+              --lnd.macaroondir=/data/chain/bitcoin/{{ .Values.global.network }}
+              --lnd.tlspath=/data/tls.cert']
+          resources:
+{{ toYaml .Values.lndmon.resources | indent 12 }}
+          ports:
+            - name: prometheus-port
+              containerPort: {{ default 8990 .Values.lndmon.prometheus.port }}
+          volumeMounts:
+            # lnd data volume for lndmon sidecar.
+            - name: data-lnd
+              mountPath: /data
+      {{- end }}
+              
+      volumes:
+        # we'll create a new volume for the config map, so lnd
+        # has access to the config file specified in the values.yaml.
+        - name: lnd-config
+          configMap:
+            name: {{ template "lnd.fullname" . }}-lnd
+
+        - name: lnd-init
+          configMap:
+            name: {{ template "lnd.fullname" . }}-init-script
+            defaultMode: 0777
+
+        # Next we create the expected data volume for lnd.
+        - name: data-lnd
+        {{- if .Values.lnd.persistence.enabled }}
+          {{- if .Values.lnd.persistence.hostPath }}
+          hostPath:
+            path: {{ .Values.lnd.persistence.hostPath }}
+          {{- else }}
+          persistentVolumeClaim:
+            {{- $lndDataPvcDefault := printf "%s-%s" $lndFullname .Values.global.network }}
+            claimName: {{ default $lndDataPvcDefault .Values.lnd.persistence.existingClaim }}
+          {{- end -}}
+        {{- else -}}
+          emptyDir: {}
+        {{- end }}
+
+        # We create the backup volume where lnd stores backup files
+        - name: backup-lnd
+        {{- if and .Values.lnd.backupPersistence.enabled (not .Values.lnd.persistence.hostPath) }}
+          persistentVolumeClaim:
+            {{- $lndBakPvcDefault := printf "%s-%s-backup" $lndFullname .Values.global.network }}
+            claimName: {{ default $lndBakPvcDefault .Values.lnd.backupPersistence.existingClaim }}
+        {{- else }}
+          emptyDir: {}
+        {{- end }}

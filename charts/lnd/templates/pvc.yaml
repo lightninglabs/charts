@@ -1,0 +1,29 @@
+{{- if and .Values.lnd.persistence.enabled (not (or .Values.lnd.persistence.existingClaim .Values.lnd.persistence.hostPath)) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ template "lnd.fullname" . }}-{{ .Values.global.network }}
+  {{- with .Values.lnd.persistence.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  labels:
+    app: {{ template "lnd.name" . }}
+    chart: "{{ .Chart.Name }}-{{ .Chart.Version }}"
+    release: "{{ .Release.Name }}"
+    heritage: "{{ .Release.Service }}"
+spec:
+  accessModes:
+    - {{ .Values.lnd.persistence.accessMode | quote }}
+  resources:
+    requests:
+      storage: "{{ template "lnd.pvcSize" . }}"
+
+{{- if .Values.lnd.persistence.storageClass }}
+  {{- if (eq "-" .Values.lnd.persistence.storageClass) }}
+  storageClassName: ""
+  {{- else }}
+  storageClassName: "{{ .Values.lnd.persistence.storageClass }}"
+  {{- end }}
+{{- end }}
+{{- end }}
