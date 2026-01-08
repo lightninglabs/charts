@@ -1,0 +1,28 @@
+{{- if and .Values.lnd.backupPersistence.enabled (not .Values.lnd.backupPersistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ template "lnd.fullname" . }}-{{ .Values.global.network }}-backup
+  {{- with .Values.lnd.backupPersistence.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  labels:
+    app: {{ template "lnd.name" . }}
+    chart: "{{ .Chart.Name }}-{{ .Chart.Version }}"
+    release: "{{ .Release.Name }}"
+    heritage: "{{ .Release.Service }}"
+spec:
+  accessModes:
+    - {{ .Values.lnd.backupPersistence.accessMode | quote }}
+  resources:
+    requests:
+      storage: {{ .Values.lnd.backupPersistence.size | quote }}
+{{- if .Values.lnd.backupPersistence.storageClass }}
+{{- if (eq "-" .Values.lnd.backupPersistence.storageClass) }}
+  storageClassName: ""
+{{- else }}
+  storageClassName: "{{ .Values.lnd.backupPersistence.storageClass }}"
+{{- end }}
+{{- end }}
+{{- end }}

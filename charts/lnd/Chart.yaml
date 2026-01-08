@@ -1,0 +1,23 @@
+apiVersion: v2
+name: lnd
+
+version: 0.2.39
+appVersion: v0.1.31-beta-lnd-v0.19.3-beta
+
+description: Lightning Network Daemon - Bitcoin LN node
+keywords:
+  - bitcoin
+  - lightning
+  - lightningnetwork
+  - lnd
+home: https://docs.lightning.engineering/lightning-network-tools/lnd
+sources:
+  - https://github.com/LightningNetwork/lnd
+maintainers:
+  - name: Calvin Zachman
+    email: calvin@lightning.engineering
+  - name: Kevin Cai
+    email: kevin@lightning.engineering
+  - name: Jacob Schuler
+    email: jacob@lightning.engineering
+icon: https://github.com/lightningnetwork/lnd/raw/master/logo.png

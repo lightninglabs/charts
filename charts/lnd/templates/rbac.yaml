@@ -1,0 +1,44 @@
+{{- if .Values.rbac.create | default false }}
+{{- $root := . }}
+{{- $lndSecrets := .Values.lnd.secrets | default dict }}
+{{- $rpcNamespaces := $lndSecrets.rpcSecretNamespace | default list }}
+{{- $allNamespaces := append $rpcNamespaces .Release.Namespace | uniq }}
+
+---
+{{- if .Values.serviceAccount.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ template "lnd.serviceAccountName" . }}
+---
+{{- end }}
+
+# Grant permissions to write secrets to desired namespaces.
+# NOTE: This is used to write RPC secrets to multiple namespaces.
+{{- range $namespace := $allNamespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ template "lnd.fullname" $root }}-secret-updater
+  namespace: {{ $namespace }}
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "create", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ template "lnd.fullname" $root }}-secret-updater
+  namespace: {{ $namespace }}
+roleRef:
+  kind: Role
+  name: {{ template "lnd.fullname" $root }}-secret-updater
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  name: {{ template "lnd.serviceAccountName" $root }}
+  namespace: {{ $root.Release.Namespace }}
+{{- end }}
+{{- end }}
