@@ -1,0 +1,43 @@
+## Reference: https://github.com/helm/chart-testing-action
+# - https://github.com/helm/chart-testing/blob/main/doc/ct_lint.md
+name: Helm - Linting and Testing
+on:
+  pull_request:
+    paths:
+      - 'charts/**'
+
+permissions:
+  contents: read
+
+jobs:
+  chart-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup Helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+        with:
+          version: v4.0.4
+
+      - name: Setup Chart Linting
+        id: lint
+        uses: helm/chart-testing-action@6ec842c01de15ebb84c8627d2744a0c2f2755c9f # v2.8.0
+        with:
+          version: v3.14.0
+
+      - name: List changed charts
+        id: list-changed-charts
+        run: |
+          changed=$(ct list-changed --config ./.github/config/ct-lint.yaml)
+          if [[ -n "$changed" ]]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run chart-testing (lint)
+        if: steps.list-changed-charts.outputs.changed == 'true'
+        run: |
+          ct lint --debug --config ./.github/config/ct-lint.yaml --lint-conf ./.github/config/lintconf.yaml

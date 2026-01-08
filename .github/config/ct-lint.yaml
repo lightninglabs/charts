@@ -1,0 +1,21 @@
+## Reference: https://github.com/helm/chart-testing/blob/master/doc/ct_lint-and-install.md
+remote: origin
+target-branch: master
+chart-dirs:
+  - charts
+# helm-extra-args: "--timeout 600s"
+
+# Activates a check for chart version increments (default true)
+check-version-increment: true
+# Enable schema validation of 'Chart.yaml' using Yamale (default true)
+validate-chart-schema: false
+# Enable validation of maintainer account names in chart.yml.
+validate-maintainers: false
+
+# Enable linting of 'Chart.yaml' and values files (default true).
+validate-yaml: true
+
+# Skip charts that are marked as deprecated.
+exclude-deprecated: true
+
+excluded-charts: []
