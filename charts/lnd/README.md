@@ -27,6 +27,13 @@ container, providing a drop-in monitoring solution with Prometheus metrics.
 - Helm v3.0+
 - PV provisioner for persistent data support
 
+## Global Settings
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `global.network` | Bitcoin network (`mainnet`, `testnet`, `testnet4`, `regtest`, `signet`, `simnet`) | `mainnet` |
+| `global.clusterName` | Cluster name used in ServiceMonitor labels | — |
+
 ## Configuration
 
 The `lnd.conf` file is generated from a template instead being hardcoded.
@@ -52,6 +59,51 @@ lnd:
       chainbackend.attempts: 3
       tls.attempts: 1
 ```
+### Service Types
+
+The `lnd.service.type` field controls how the node is exposed:
+
+| Type | Description |
+|------|-------------|
+| `primary` | Exposes P2P and RPC ports as a ClusterIP service (default) |
+| `gateway` | Exposes P2P via a LoadBalancer to the internet; RPC and REST remain internal |
+| `signer` | Remote signer mode — exposes only the RPC port (no P2P listener) |
+| `other` | Generic node exposing P2P and RPC internally |
+
+The REST endpoint is always enabled and exposed on the internal service, regardless of service type.
+
+Gateway-specific settings:
+```yaml
+lnd:
+  service:
+    type: gateway
+    hostname: lnd.example.com       # hostname for external-dns and LND peer advertisement
+    gatewayAnnotations: {}           # Additional annotations on the LB Service
+```
+
+LND service port configuration:
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `lnd.service.p2pPort` | P2P service port | `9735` |
+| `lnd.service.p2pTargetPort` | P2P container port | `9735` |
+| `lnd.service.rpcPort` | LND gRPC service port | `10009` |
+| `lnd.service.rpcTargetPort` | LND gRPC container port | `10009` |
+| `lnd.service.restPort` | REST service port | `8080` |
+| `lnd.service.restTargetPort` | REST container port | `8080` |
+
+### Bitcoind Connection
+
+```yaml
+lnd:
+  bitcoind:
+    hostname: bitcoind              # bitcoind service name
+    port: ""                        # bitcoind RPC port (auto-detected from network)
+    zmqpubrawblockPort: 28332
+    zmqpubrawtxPort: 28333
+```
+
+The bitcoind RPC port is auto-detected based on `global.network` if not explicitly set: mainnet `8332`, testnet `18332`, testnet4 `48332`, regtest `18443`, signet `38332`.
+
 ### RPC credentials
 
 While the `bitcoind.rpcuser` and `bitcoind.rpcpass` can be set directly in `values.yaml` as shown above, **this is not recommended for production**.
@@ -65,14 +117,15 @@ kubectl create secret generic bitcoin-rpc \
   --from-literal=rpcuser=lightning \
   --from-literal=rpcpass=lightning
 ```
-The default secret name and variables name can be changed:
+The default secret name and key names can be changed:
 ```yaml
 lnd:
   ...
   config:
     bitcoin:
       ...
-      rpcSecretName: bitcoin-rpc
+      credentials:
+        secretName: bitcoin-rpc  # default
 ```
 
 ### Remote database considerations
@@ -148,21 +201,74 @@ lnd:
 
 ### Persistence
 
-If you are not using an external database, node data (`channel.db`, etc)
-is stored in `/data`. By default a PersistentVolumeClaim is created and
-mounted into that directory. To disable persistence and use an `emptyDir`
-instead, set `persistence.enabled: false`
+Node data (`channel.db`, etc) is stored in `/data`. By default a
+PersistentVolumeClaim is created and mounted into that directory.
 
-> *!!! WARNING !!!*
-> 
-> An `emptyDir` volume is first created when a Pod is assigned to a Node,
-> and exists as long as that Pod is running on that node. When a Pod is
-> removed from a node for any reason, the data in the `emptyDir` is
-> deleted forever.
-> 
-> *Do NOT use `emptyDir` in production unless you know what you
-> are doing! All data stored in the volume will be lost on
-> container restart! This is only safe if using an external database.*
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `lnd.persistence.enabled` | Enable PVC for LND data | `true` |
+| `lnd.persistence.accessMode` | PVC access mode | `ReadWriteOnce` |
+| `lnd.persistence.existingClaim` | Use an existing PVC instead of creating one | — |
+| `lnd.persistence.hostPath` | Use a hostPath volume instead of a PVC | — |
+| `lnd.backupPersistence.enabled` | Enable PVC for channel backups | `true` |
+| `lnd.backupPersistence.accessMode` | Backup PVC access mode | `ReadWriteOnce` |
+| `lnd.backupPersistence.size` | Backup PVC size | `512Mi` |
+| `lnd.backupPersistence.existingClaim` | Use an existing PVC for backups | — |
+
+#### Running without a PVC
+
+> **Advanced Configuration** — Disabling persistence is intended for
+> operators who have configured a remote database backend (e.g. PostgreSQL
+> or etcd) and fully understand the implications. This configuration is
+> not suitable for general use and may result in permanent data loss if
+> misconfigured.
+
+To disable persistence and use an `emptyDir` instead, set
+`lnd.persistence.enabled: false`.
+
+An `emptyDir` volume is created when a Pod is assigned to a Node and
+exists only as long as that Pod is running on that node. When a Pod is
+removed from a node for any reason, the data in the `emptyDir` is
+deleted permanently.
+
+### Image & Pod Settings
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `lnd.repository` | LND container image repository | `lightninglabs/lndinit` |
+| `lnd.tag` | Image tag (defaults to `Chart.AppVersion`) | — |
+| `lnd.pullPolicy` | Image pull policy | `IfNotPresent` |
+| `lnd.affinity` | Pod affinity rules | — |
+| `lnd.initialDelaySeconds` | Startup probe initial delay | `60` |
+| `terminationGracePeriodSeconds` | Pod termination grace period | `30` |
+| `resources` | Container resource requests/limits | — |
+| `usePullSecrets` | Enable image pull secrets | `false` |
+| `pullSecrets` | List of pull secret references | `[{name: image-pull-secret}]` |
+
+### lndmon (Monitoring Sidecar)
+
+[lndmon](https://github.com/lightninglabs/lndmon) can be deployed as a
+sidecar container to expose Prometheus metrics.
+
+```yaml
+lndmon:
+  enabled: true
+  repository: lightninglabs/lndmon
+  tag: v0.2.15
+  prometheus:
+    port: 8990
+    lndInstance: primary
+    serviceMonitor: false          # create a ServiceMonitor resource
+    noLegacyAnnotations: false     # suppress prometheus.io/* annotations
+```
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `lndmon.enabled` | Deploy the lndmon sidecar | `false` |
+| `lndmon.prometheus.port` | Prometheus metrics port | `8990` |
+| `lndmon.prometheus.serviceMonitor` | Create a ServiceMonitor CR | `false` |
+| `lndmon.prometheus.noLegacyAnnotations` | Disable legacy `prometheus.io/*` annotations | `false` |
+| `lndmon.grafanaInstanceLabel` | Grafana instance label for ServiceMonitor | `""` |
 
 
 ## Installation

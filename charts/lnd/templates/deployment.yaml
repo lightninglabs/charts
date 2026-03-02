@@ -31,8 +31,11 @@ spec:
     spec:
       terminationGracePeriodSeconds: {{ default "30" .Values.terminationGracePeriodSeconds }}
 
-      affinity: {{- toYaml .Values.lnd.affinity | nindent 8 }}
-          
+      {{- with .Values.lnd.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
       # We use the special service account created, so lndinit is
       # able to update the secret as expected.
       serviceAccountName: {{ template "lnd.serviceAccountName" . }}
@@ -54,8 +57,10 @@ spec:
         - name: lnd
           image: "{{ .Values.lnd.repository }}:{{ default .Chart.AppVersion .Values.lnd.tag }}"
           imagePullPolicy: {{ default "IfNotPresent" .Values.lnd.pullPolicy | quote }}
+          {{- with .Values.resources }}
           resources:
-{{ toYaml .Values.resources | indent 12 }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           env:
             - name: WALLET_SECRET_NAMESPACE
               value: {{ default .Release.Namespace $lndSecrets.existingWalletSecretNamespace }}
@@ -83,7 +88,7 @@ spec:
             - name: REMOTE_SIGNER_RPC_SECRETS_NAMESPACE
               value: {{ $lndSecrets.remoteSigningNamespace }}
             {{- end }}
-          {{- if not (hasKey (ternary .Values.lnd.config.btcd .Values.lnd.bitcoind (eq $bitcoinNode "btcd")) "rpcpass") }}
+          {{- if not (hasKey (ternary .Values.lnd.config.btcd .Values.lnd.config.bitcoind (eq $bitcoinNode "btcd")) "rpcpass") }}
           envFrom:
           - secretRef:
               name: {{ .Values.lnd.config.bitcoin.credentials.secretName }}
@@ -103,8 +108,8 @@ spec:
           {{- else if eq .Values.global.network "signet" }}
             '--bitcoind.rpchost={{ .Values.lnd.bitcoind.hostname }}:{{ default "38332" .Values.lnd.bitcoind.port }}',
           {{- end }}
-            '--bitcoind.zmqpubrawblock=tcp://{{ .Values.lnd.bitcoind.hostname }}:28332',
-            '--bitcoind.zmqpubrawtx=tcp://{{ .Values.lnd.bitcoind.hostname }}:28333',
+            '--bitcoind.zmqpubrawblock=tcp://{{ .Values.lnd.bitcoind.hostname }}:{{ .Values.lnd.bitcoind.zmqpubrawblockPort }}',
+            '--bitcoind.zmqpubrawtx=tcp://{{ .Values.lnd.bitcoind.hostname }}:{{ .Values.lnd.bitcoind.zmqpubrawtxPort }}',
           {{- end }}
             '--datadir=/data',
             '--backupfilepath=/backup/channel.backup',
@@ -159,10 +164,8 @@ spec:
             - name: lnd-p2p
               containerPort: {{ .Values.lnd.service.p2pTargetPort }}
           {{- end }}
-          {{- if (eq .Values.lnd.service.type "rest") }}
             - name: lnd-rest
               containerPort: {{ .Values.lnd.service.restTargetPort }}
-          {{- end }}
           volumeMounts:
             # The persistent volume for the main lnd instance. 
             - name: data-lnd
@@ -195,8 +198,10 @@ spec:
               --lnd.host={{ default "localhost" .Values.lndmon.lndHost }}:{{ default "10009" .Values.lndmon.lndPort }}
               --lnd.macaroondir=/data/chain/bitcoin/{{ .Values.global.network }}
               --lnd.tlspath=/data/tls.cert']
+          {{- with .Values.lndmon.resources }}
           resources:
-{{ toYaml .Values.lndmon.resources | indent 12 }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           ports:
             - name: prometheus-port
               containerPort: {{ default 8990 .Values.lndmon.prometheus.port }}

@@ -1,16 +1,36 @@
-1. Get the application URL by running these commands:
-
 LND RPC can be accessed via port {{ .Values.lnd.service.rpcPort }} on the following DNS name from within your cluster:
-{{ template "lnd.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
+{{ template "lnd.fullname" . }}-int.{{ .Release.Namespace }}.svc.cluster.local
 
 To connect to lnd RPC:
 
-1. Forward the port for the node:
+1. Forward the RPC port:
 
-  $ kubectl port-forward --namespace {{ .Release.Namespace }}
-  $(kubectl get pods --namespace {{ .Release.Namespace }} -l "app={{ template "lnd.name" . }},release={{ .Release.Name }}" -o jsonpath="{ .items[0].metadata.name }")  {{ .Values.lnd.service.rpcPort }}
+  $ export LND_POD=$(kubectl get pods --namespace {{ .Release.Namespace }} \
+    -l "app={{ template "lnd.name" . }},release={{ .Release.Name }}" \
+    -o jsonpath="{ .items[0].metadata.name }")
 
-2. Test connection with user and password provided in configuration file:
+  $ kubectl port-forward --namespace {{ .Release.Namespace }} $LND_POD {{ .Values.lnd.service.rpcPort }}
 
-  $ curl --user rpcuser:rpcpassword -k http://127.0.0.1:{{ .Values.lnd.service.rpcPort }} --data-binary '{"jsonrpc": "1.0", "id":"curltest", "method": "getinfo", "params": [] }' -H 'content-type: text/plain;'
+2. Copy the TLS cert and macaroon locally:
 
+  $ kubectl cp --namespace {{ .Release.Namespace }} \
+    $LND_POD:/data/tls.cert /tmp/lnd-tls.cert
+
+  $ kubectl cp --namespace {{ .Release.Namespace }} \
+    $LND_POD:/data/chain/bitcoin/{{ .Values.global.network }}/admin.macaroon /tmp/lnd-admin.macaroon
+
+3. Query the node with your local lncli:
+
+  $ lncli --network {{ .Values.global.network }} \
+    --rpcserver localhost:{{ .Values.lnd.service.rpcPort }} \
+    --tlscertpath /tmp/lnd-tls.cert \
+    --macaroonpath /tmp/lnd-admin.macaroon \
+    getinfo
+
+Alternatively, query directly from within the pod:
+
+  $ kubectl exec -it --namespace {{ .Release.Namespace }} $LND_POD -- \
+    lncli --network {{ .Values.global.network }} \
+    --tlscertpath /data/tls.cert \
+    --macaroonpath /data/chain/bitcoin/{{ .Values.global.network }}/admin.macaroon \
+    getinfo

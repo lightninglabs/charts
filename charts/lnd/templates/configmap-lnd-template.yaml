@@ -17,6 +17,7 @@ data:
 
   lnd.conf: |-
     [Application Options]
+    restlisten=0.0.0.0:{{ .Values.lnd.service.restTargetPort }}
     {{- range $k, $v := .Values.lnd.config.overrides }}
     {{ $k }}={{ $v }}
     {{- end }}
@@ -31,6 +32,8 @@ data:
     bitcoin.simnet=true
     {{- else if eq $bitcoinNetwork "signet" }}
     bitcoin.signet=true
+    {{- else if eq $bitcoinNetwork "testnet4" }}
+    bitcoin.testnet4=true
     {{- else }}
     bitcoin.regtest=true
     {{- end }}
@@ -50,15 +53,15 @@ data:
     btcd.{{ $k }}={{ $v }}
     {{- end }}
     {{- end }}
-    {{- if not (hasKey .Values.lnd.btcd "rpcuser") }}
+    {{- if not (hasKey .Values.lnd.config.btcd "rpcuser") }}
     btcd.rpcuser=${{ .Values.lnd.config.bitcoin.credentials.userKey }}
     {{- else }}
-    btcd.rpcuser={{ .Values.lnd.btcd.rpcuser }}
+    btcd.rpcuser={{ .Values.lnd.config.btcd.rpcuser }}
     {{- end }}
-    {{- if not (hasKey .Values.lnd.btcd "rpcpass") }}
-    btcd.rpcpass=${{ .Values.lnd.bitcoin.credentials.passwordKey }}
+    {{- if not (hasKey .Values.lnd.config.btcd "rpcpass") }}
+    btcd.rpcpass=${{ .Values.lnd.config.bitcoin.credentials.passwordKey }}
     {{- else }}
-    btcd.rpcpass={{ .Values.lnd.btcd.rpcpass }}
+    btcd.rpcpass={{ .Values.lnd.config.btcd.rpcpass }}
     {{- end }}
   {{- end }}
 
@@ -69,21 +72,21 @@ data:
     bitcoind.{{ $k }}={{ $v }}
     {{- end }}
     {{- end }}
-    {{- if not (hasKey .Values.lnd.bitcoind "rpcuser") }}
+    {{- if not (hasKey .Values.lnd.config.bitcoind "rpcuser") }}
     bitcoind.rpcuser=${{ .Values.lnd.config.bitcoin.credentials.userKey }}
     {{- else }}
-    bitcoind.rpcuser={{ .Values.lnd.bitcoind.rpcuser }}
+    bitcoind.rpcuser={{ .Values.lnd.config.bitcoind.rpcuser }}
     {{- end }}
-    {{- if not (hasKey .Values.lnd.bitcoind "rpcpass") }}
+    {{- if not (hasKey .Values.lnd.config.bitcoind "rpcpass") }}
     bitcoind.rpcpass=${{ .Values.lnd.config.bitcoin.credentials.passwordKey }}
     {{- else }}
-    bitcoind.rpcpass={{ .Values.lnd.bitcoind.rpcpass }}
+    bitcoind.rpcpass={{ .Values.lnd.config.bitcoind.rpcpass }}
     {{- end }}
   {{- end }} 
 
   {{- if eq $bitcoinNode "neutrino" }}
     [neutrino]
-    {{- range $k, $v := .Values.lnd.config.bitcoind }}
+    {{- range $k, $v := .Values.lnd.config.neutrino }}
     neutrino.{{ $k }}={{ $v }}
     {{- end }}
   {{- end }} 
@@ -219,7 +222,7 @@ data:
 
   {{- if .Values.lnd.config.remotesigner }}
     [remotesigner]
-    {{- range $k, $v := .Values.lnd.config.remoteSigner }}
+    {{- range $k, $v := .Values.lnd.config.remotesigner }}
     remotesigner.{{ $k }}={{ $v }}
     {{- end }}
   {{- end }}
