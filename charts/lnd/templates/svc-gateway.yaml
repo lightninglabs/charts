@@ -11,9 +11,10 @@ metadata:
     release: {{ .Release.Name }}
     heritage: {{ .Release.Service }}
   annotations:
-    service.beta.kubernetes.io/aws-load-balancer-type: {{ .Values.lnd.service.awsLoadBalancerType }}
-    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: {{ .Values.lnd.service.awsLoadBalancerBackendProtocol }}
     external-dns.alpha.kubernetes.io/hostname: {{ .Values.lnd.service.hostname }}
+    {{- with .Values.lnd.service.gatewayAnnotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
 spec:
   type: LoadBalancer
   selector:
@@ -23,6 +24,6 @@ spec:
     - name: lnd-p2p
       protocol: TCP
       port: {{ .Values.lnd.service.p2pPort }}
-      targetPort: {{ .Values.lnd.service.targetPort }}
+      targetPort: {{ .Values.lnd.service.p2pTargetPort }}
 
 {{- end }}

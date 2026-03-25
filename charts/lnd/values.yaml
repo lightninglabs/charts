@@ -27,6 +27,8 @@ lnd:
         secretName: bitcoin-rpc
         userKey: "rpcuser"
         passwordKey: "rpcpass"
+    bitcoind: {}
+    btcd: {}
   db:
     useNativeSql: false
     backend: bolt
@@ -46,11 +48,13 @@ lnd:
     p2pTargetPort: 9735
     rpcPort: 10009
     rpcTargetPort: 10009
+    restPort: 8080
+    restTargetPort: 8080
   bitcoind:
     # NOTE: This assumes that bitcoind is deployed to the same namespace.
     hostname: bitcoind
-    zmqpubrawblock: tcp://bitcoind:28332
-    zmqpubrawtx: tcp://bitcoind:28333
+    zmqpubrawblockPort: 28332
+    zmqpubrawtxPort: 28333
   secrets:
     remoteSigning: false
 
@@ -62,6 +66,8 @@ pullSecrets:
 # lndmon: exposes additional network and payment related metrics.
 # optionally deploy as additional container in lnd deployment.
 lndmon:
+  repository: lightninglabs/lndmon
+  tag: v0.2.15
   enabled: false
   prometheus:
     port: 8990
