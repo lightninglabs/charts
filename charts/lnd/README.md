@@ -91,6 +91,45 @@ LND service port configuration:
 | `lnd.service.restPort` | REST service port | `8080` |
 | `lnd.service.restTargetPort` | REST container port | `8080` |
 
+### Network Policy
+
+An optional ingress NetworkPolicy can restrict inbound connections to the LND
+pods in this release. It is disabled by default and requires a CNI that supports
+NetworkPolicy enforcement.
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `networkPolicy.enabled` | Create an ingress NetworkPolicy for LND pods | `false` |
+| `networkPolicy.ingress` | Kubernetes NetworkPolicy ingress rules | `[]` |
+
+Enabling the policy with an empty ingress list denies inbound connections unless
+another NetworkPolicy selecting the same pods allows them. Policies are additive.
+This policy does not restrict egress.
+
+For example, allow gRPC connections only from pods labeled `role: watch-only` in
+the `lightning` namespace:
+
+```yaml
+networkPolicy:
+  enabled: true
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: lightning
+          podSelector:
+            matchLabels:
+              role: watch-only
+      ports:
+        - port: 10009
+          protocol: TCP
+```
+
+The namespace and pod selectors in this example must both match. Use the actual
+Pod listener port when customizing the chart's ports. Add rules for any other
+required inbound connections, such as P2P, REST, or Prometheus scraping of the
+lndmon sidecar. The example above permits only gRPC traffic.
+
 ### Bitcoind Connection
 
 ```yaml

@@ -92,3 +92,9 @@ lndmon:
       - app
       - lnd_instance
   grafanaInstanceLabel: ""
+
+# Ingress restrictions require a CNI that supports NetworkPolicy enforcement.
+networkPolicy:
+  enabled: false
+  # An empty list denies ingress unless another policy allows it.
+  ingress: []
